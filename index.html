@@ -245,7 +245,7 @@
     <div class="panel">
       <p class="h">How the SIP 500 works</p>
       <ol style="padding-left:18px;margin:8px 0 0;line-height:1.55">
-        <li><b>Market hours: 7:30 PM – 2:00 AM ET.</b> <b>After hours: 2:00 – 4:00 AM ET.</b> After-hours drinks still move prices. Trading is locked 4 AM – 7:30 PM.</li>
+        <li><b>Market hours: 7:30 PM – 2:00 AM ET.</b> <b>After hours: 2:00 – 4:00 AM ET.</b> After-hours drinks move prices at half strength. Trading is locked 4 AM – 7:30 PM.</li>
         <li>Every drink is a <b>stock</b> with a ticker, grouped into sectors like the real S&amp;P 500.</li>
         <li>When you order a drink, tap <b>+</b>. You buy one share at the current price.</li>
         <li>Prices follow <b>popularity</b>. Each drink's price depends on its share of what everyone's ordering. Popular drinks <span class="up">rise</span>, and drinks nobody orders <span class="down">sink</span>.</li>
@@ -373,7 +373,8 @@ const STOCKS = [
 const HALF_LIFE_MIN = 45;   // a drink bought 45 min ago counts half as much as one bought now
 const SMOOTH = 1;           // keeps the first few drinks from swinging prices wildly
 const SENSITIVITY = 0.5;    // 0.5 = a drink with 4x the average demand trades at 2x its opening price
-const MIN_MULT = 0.3, MAX_MULT = 4; // prices stay between 30% and 400% of opening
+const MIN_MULT = 0.3, MAX_MULT = 4;
+const AH_WEIGHT = 0.5;      // after-hours (2–4 AM) drinks count half as much // prices stay between 30% and 400% of opening
 const INDEX_BASE = 500, GAME_ID = "sip500", UNDO_MS = 15000;
 const EVENTS = {
   bull:     { label: "🐂 Bull run! Every stock +5%",            apply: (s) => 1.05 },
@@ -452,7 +453,7 @@ function recompute() {
     if (last != null) { const d = decay(x.ts - last); for (const s of STOCKS) S[s.t] *= d; }
     last = x.ts;
     if (x.event) { const e = EVENTS[x.kind]; if (e) for (const s of STOCKS) ev[s.t] *= e.apply(s, x); }
-    else if (S[x.sector] != null) { S[x.sector] += 1; vol[x.sector] += 1; }
+    else if (S[x.sector] != null) { const w = x.ah ? AH_WEIGHT : 1; S[x.sector] += w; vol[x.sector] += w; }
     push(priceFrom(S, ev));
   }
   if (last != null) { const d = decay(Date.now() - last); for (const s of STOCKS) S[s.t] *= d; }
