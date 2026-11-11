@@ -124,6 +124,7 @@
   .foot { text-align: center; font-size: 11px; color: var(--muted); margin: 18px 0 6px; }
   .bell { text-align: center; font-size: 12px; font-weight: 600; padding: 6px 12px; border-top: 1px solid var(--line); }
   .bell.open { color: var(--up); background: rgba(22,199,132,.07); }
+  .bell.after { color: #c4b5fd; background: rgba(138,92,246,.10); }
   .bell.closed { color: #fbbf24; background: rgba(251,191,36,.08); }
   body.closed .live::before { background: #fbbf24; animation: none; }
   body.closed .buy, body.closed .big-buy { background: #2a323d; color: #6b7785; }
@@ -244,7 +245,7 @@
     <div class="panel">
       <p class="h">How the SIP 500 works</p>
       <ol style="padding-left:18px;margin:8px 0 0;line-height:1.55">
-        <li><b>Market hours: 7:30 PM – 2:00 AM ET.</b> Trading is locked outside those hours.</li>
+        <li><b>Market hours: 7:30 PM – 2:00 AM ET.</b> <b>After hours: 2:00 – 4:00 AM ET.</b> After-hours drinks still move prices. Trading is locked 4 AM – 7:30 PM.</li>
         <li>Every drink is a <b>stock</b> with a ticker, grouped into sectors like the real S&amp;P 500.</li>
         <li>When you order a drink, tap <b>+</b>. You buy one share at the current price.</li>
         <li>Prices follow <b>popularity</b>. Each drink's price depends on its share of what everyone's ordering. Popular drinks <span class="up">rise</span>, and drinks nobody orders <span class="down">sink</span>.</li>
@@ -613,7 +614,7 @@ function feedHTML(limit) {
   const list = trades.slice(-limit).reverse();
   return list.map((t) => t.event
     ? `<div class="feed-item event"><div class="dot">📰</div><div style="flex:1"><b>${esc(t.drink)}</b><div class="sub">Market news · ${ago(t.ts)}</div></div></div>`
-    : `<div class="feed-item"><div class="dot">${esc(initials(t.player))}</div><div style="flex:1"><b>${esc(t.player)}</b> bought <b>${esc(t.sector)}</b> <span class="muted">(${esc((BY_T[t.sector] || {}).name || t.drink)})</span><div class="sub num">@ ${money(t.price)} · ${ago(t.ts)}</div></div></div>`
+    : `<div class="feed-item"><div class="dot">${esc(initials(t.player))}</div><div style="flex:1"><b>${esc(t.player)}</b> bought <b>${esc(t.sector)}</b> <span class="muted">(${esc((BY_T[t.sector] || {}).name || t.drink)})</span><div class="sub num">@ ${money(t.price)}${t.ah ? ` · <span style="color:#c4b5fd">after hours</span>` : ""} · ${ago(t.ts)}</div></div></div>`
   ).join("") || `<p class="muted" style="margin:8px 0 0">No trades yet.</p>`;
 }
 function renderFeed() { $("feed").innerHTML = feedHTML(80); $("tv-feed").innerHTML = feedHTML(14); }
@@ -652,24 +653,37 @@ function renderMe() { $("me-chip").textContent = me.name ? me.name : "Join"; }
 /* ---------- trading ---------- */
 let busy = false;
 /* ---------- market hours (Eastern Time) ---------- */
-const OPEN_MIN = 19 * 60 + 30, CLOSE_MIN = 2 * 60; // 7:30 PM – 2:00 AM ET
+const OPEN_MIN = 19 * 60 + 30, CLOSE_MIN = 2 * 60, AH_END_MIN = 4 * 60; // 7:30 PM – 2 AM regular, 2 – 4 AM after hours (ET)
 function etMinutes() {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" }).formatToParts(new Date());
   const g = (t) => +parts.find((p) => p.type === t).value;
   return g("hour") * 60 + g("minute") + g("second") / 60;
 }
-function marketOpen() { const m = etMinutes(); return m >= OPEN_MIN || m < CLOSE_MIN; }
+function session(m = etMinutes()) {
+  if (m >= OPEN_MIN || m < CLOSE_MIN) return "open";
+  if (m < AH_END_MIN) return "after";
+  return "closed";
+}
+function marketOpen() { return session() !== "closed"; }
 function untilText(mins) { const h = Math.floor(mins / 60), m = Math.ceil(mins % 60); return h ? `${h}h ${m}m` : `${m}m`; }
-let wasOpen = null;
+let lastSession = null;
 function renderBell() {
-  const m = etMinutes(), open = marketOpen();
-  const left = open ? (m >= OPEN_MIN ? 24 * 60 + CLOSE_MIN - m : CLOSE_MIN - m) : OPEN_MIN - m;
-  $("bell").className = "bell num " + (open ? "open" : "closed");
-  $("bell").textContent = open ? `Market open · Closing bell 2:00 AM ET (in ${untilText(left)})` : `Market closed · Opening bell 7:30 PM ET (in ${untilText(left)})`;
-  document.body.classList.toggle("closed", !open);
-  document.querySelector(".live").textContent = open ? "LIVE" : "CLOSED";
-  if (wasOpen !== null && wasOpen !== open) toast(open ? "🔔 Opening bell! The SIP 500 is open." : "🔔 Closing bell. Market closed until 7:30 PM ET.");
-  wasOpen = open;
+  const m = etMinutes(), ss = session(m);
+  const left = ss === "open" ? (m >= OPEN_MIN ? 24 * 60 + CLOSE_MIN - m : CLOSE_MIN - m) : ss === "after" ? AH_END_MIN - m : OPEN_MIN - m;
+  $("bell").className = "bell num " + ss;
+  $("bell").textContent = {
+    open: `Market open · Closing bell 2:00 AM ET (in ${untilText(left)})`,
+    after: `🌙 After-hours trading · Ends 4:00 AM ET (in ${untilText(left)})`,
+    closed: `Market closed · Opening bell 7:30 PM ET (in ${untilText(left)})`,
+  }[ss];
+  document.body.classList.toggle("closed", ss === "closed");
+  document.querySelector(".live").textContent = { open: "LIVE", after: "AFTER HOURS", closed: "CLOSED" }[ss];
+  if (lastSession !== null && lastSession !== ss) toast({
+    open: "🔔 Opening bell! The SIP 500 is open.",
+    after: "🔔 Closing bell! After-hours trading until 4 AM.",
+    closed: "🌙 After hours over. Market closed until 7:30 PM ET.",
+  }[ss]);
+  lastSession = ss;
 }
 
 async function buy(t) {
@@ -688,7 +702,7 @@ async function buy(t) {
         basis: { ...(pd.basis || {}), [t]: r2(((pd.basis || {})[t] || 0) + price) },
         cost: r2((pd.cost || 0) + price), drinks: (pd.drinks || 0) + 1, updatedAt: Date.now(),
       });
-      tx.set(tradeRef, { player: me.name, playerId: me.id, sector: t, drink: s.name, price, ts: Date.now() });
+      tx.set(tradeRef, { player: me.name, playerId: me.id, sector: t, drink: s.name, price, ah: session() === "after", ts: Date.now() });
       return price;
     });
     lastTrade = { id: tradeRef.id, t, price: paid, ts: Date.now() };
