@@ -247,7 +247,8 @@
         <li><b>Market hours: 7:30 PM – 2:00 AM ET.</b> Trading is locked outside those hours.</li>
         <li>Every drink is a <b>stock</b> with a ticker, grouped into sectors like the real S&amp;P 500.</li>
         <li>When you order a drink, tap <b>+</b>. You buy one share at the current price.</li>
-        <li>Each purchase pushes that stock <span class="up">up 5%</span> and its sector <span class="up">up 1.5%</span>. Everything else <span class="down">dips 0.2%</span>.</li>
+        <li>Prices follow <b>popularity</b>. Each drink's price depends on its share of what everyone's ordering. Popular drinks <span class="up">rise</span>, and drinks nobody orders <span class="down">sink</span>.</li>
+        <li>Recent orders count most. A drink ordered 45 minutes ago counts half as much as one ordered now, so prices keep moving all night.</li>
         <li>The <b>SIP 500 index</b> starts at 500 and tracks the whole market.</li>
         <li>Winner = best <b>return %</b>, not most drinks. Buy early into what the crowd orders next.</li>
       </ol>
@@ -365,12 +366,19 @@ const STOCKS = [
   ["BOLD",  "Bold Rock Cider", "tech", 5.00],
 ].map(([t, name, sector, ipo, note]) => ({ t, name, sector, ipo, note: note || "" }));
 
-const BUMP_SELF = 1.05, BUMP_SECTOR = 1.015, DRIFT_OTHERS = 0.998;
+/* Pricing: each stock's price follows its share of what everyone is drinking.
+   demand = drinks bought, with older drinks counting less (half-life below).
+   price  = opening price × ((demand + SMOOTH) / (average demand + SMOOTH)) ^ SENSITIVITY  */
+const HALF_LIFE_MIN = 45;   // a drink bought 45 min ago counts half as much as one bought now
+const SMOOTH = 1;           // keeps the first few drinks from swinging prices wildly
+const SENSITIVITY = 0.5;    // 0.5 = a drink with 4x the average demand trades at 2x its opening price
+const MIN_MULT = 0.3, MAX_MULT = 4; // prices stay between 30% and 400% of opening
 const INDEX_BASE = 500, GAME_ID = "sip500", UNDO_MS = 15000;
 const EVENTS = {
   bull:     { label: "🐂 Bull run! Every stock +5%",            apply: (s) => 1.05 },
   crash:    { label: "🐻 Market crash! Every stock −10%",       apply: (s) => 0.90 },
   lastcall: { label: "🔔 Last call! Clemson Blue Chips +10%",   apply: (s) => s.sector === "blue" ? 1.10 : 1 },
+  happy:    { label: "🍻 Happy hour!",                          apply: (s, x) => s.sector === x.secId ? 1.15 : 1 },
 };
 /* ============================================================ */
 
@@ -414,15 +422,40 @@ if (!me.id) { me.id = "p" + Math.random().toString(36).slice(2, 10); store.set("
 let game = null, players = [], trades = [], sortMode = "sector", searchQ = "", openRow = null, lastTrade = null;
 
 /* ---------- market math ---------- */
-const P = () => ({ ...openPrices(), ...(game && game.prices) });
-const O = () => ({ ...openPrices(), ...(game && game.open) });
+let model = { now: openPrices(), series: {}, idx: [INDEX_BASE], share: {} };
+const P = () => model.now;
+const O = () => openPrices();
 const indexOf = (prices, open) => INDEX_BASE * STOCKS.reduce((a, s) => a + (prices[s.t] || s.ipo) / (open[s.t] || s.ipo), 0) / STOCKS.length;
-function moveFactor(boughtT, s) {
-  if (s.t === boughtT) return BUMP_SELF;
-  return s.sector === BY_T[boughtT].sector ? BUMP_SECTOR : DRIFT_OTHERS;
+const decay = (ms) => Math.pow(0.5, Math.max(0, ms) / (HALF_LIFE_MIN * 60000));
+function priceFrom(S, ev) {
+  const avg = STOCKS.reduce((a, s) => a + S[s.t], 0) / STOCKS.length, out = {};
+  for (const s of STOCKS) {
+    const m = Math.pow((S[s.t] + SMOOTH) / (avg + SMOOTH), SENSITIVITY) * ev[s.t];
+    out[s.t] = r2(s.ipo * Math.min(MAX_MULT, Math.max(MIN_MULT, m)));
+  }
+  return out;
 }
-function seriesFor(t) { const o = O(); return [o[t], ...trades.map((x) => x.prices && x.prices[t]).filter((v) => v != null)]; }
-function indexSeries() { const o = O(); return [INDEX_BASE, ...trades.filter((x) => x.prices).map((x) => indexOf({ ...openPrices(), ...x.prices }, o))]; }
+// Replays every trade in order so all phones compute identical prices.
+function recompute() {
+  const S = {}, ev = {}, series = {}, idx = [INDEX_BASE];
+  for (const s of STOCKS) { S[s.t] = 0; ev[s.t] = 1; series[s.t] = [s.ipo]; }
+  let last = null;
+  const push = (p) => { for (const s of STOCKS) series[s.t].push(p[s.t]); idx.push(indexOf(p, O())); };
+  for (const x of trades) {
+    if (last != null) { const d = decay(x.ts - last); for (const s of STOCKS) S[s.t] *= d; }
+    last = x.ts;
+    if (x.event) { const e = EVENTS[x.kind]; if (e) for (const s of STOCKS) ev[s.t] *= e.apply(s, x); }
+    else if (S[x.sector] != null) S[x.sector] += 1;
+    push(priceFrom(S, ev));
+  }
+  if (last != null) { const d = decay(Date.now() - last); for (const s of STOCKS) S[s.t] *= d; }
+  const now = priceFrom(S, ev); push(now);
+  const total = STOCKS.reduce((a, s) => a + S[s.t], 0), share = {};
+  for (const s of STOCKS) share[s.t] = total ? S[s.t] / total : 0;
+  model = { now, series, idx, share };
+}
+function seriesFor(t) { return model.series[t] || [BY_T[t].ipo]; }
+function indexSeries() { return model.idx; }
 function volume() { const v = {}; trades.forEach((x) => { if (!x.event) v[x.sector] = (v[x.sector] || 0) + 1; }); return v; }
 function valueOf(p) { const pr = P(); return Object.entries(p.holdings || {}).reduce((a, [t, n]) => a + (pr[t] || 0) * n, 0); }
 function ranked() {
@@ -500,7 +533,7 @@ function stockRow(s, pr, o, vol, mine) {
     </div>
     <div class="stock-more">${open ? `<svg class="chart" id="sc-${s.t}" viewBox="0 0 300 110" preserveAspectRatio="none" style="height:90px"></svg>
       <div class="kv num"><div>Open<b>${money(o[s.t])}</b></div><div>High<b>${money(hi)}</b></div><div>Low<b>${money(lo)}</b></div><div>Volume<b>${vol[s.t] || 0}</b></div></div>
-      <div class="sub" style="margin-top:8px">${SEC[s.sector].name} · ${SEC[s.sector].nick}${mine ? ` · You own ${mine}` : ""}</div>
+      <div class="sub" style="margin-top:8px">${Math.round((model.share[s.t] || 0) * 100)}% of recent drinks · fair share ${Math.round(100 / STOCKS.length)}%${mine ? ` · You own ${mine}` : ""}</div>
       <button class="big-buy" data-buy="${s.t}">Buy 1 share · ${money(pr[s.t])}</button>` : ""}</div>
   </div>`;
 }
@@ -580,7 +613,7 @@ function feedHTML(limit) {
 function renderFeed() { $("feed").innerHTML = feedHTML(80); $("tv-feed").innerHTML = feedHTML(14); }
 
 function renderAll() {
-  renderIndex(); renderTape(); $("heat").innerHTML = heatHTML(); $("tv-heat").innerHTML = heatHTML();
+  recompute(); renderIndex(); renderTape(); $("heat").innerHTML = heatHTML(); $("tv-heat").innerHTML = heatHTML();
   renderStocks(); renderPortfolio(); renderLeaders(); renderFeed();
 }
 
@@ -640,19 +673,16 @@ async function buy(t) {
   const playerRef = doc(playersCol, me.id), tradeRef = doc(tradesCol), s = BY_T[t];
   try {
     const paid = await runTransaction(db, async (tx) => {
-      const g = await tx.get(gameRef), p = await tx.get(playerRef);
-      const gd = g.exists() ? g.data() : {};
-      const prices = { ...openPrices(), ...gd.prices }, price = prices[t];
+      const p = await tx.get(playerRef);
+      recompute(); const price = P()[t];
       const pd = p.exists() ? p.data() : { holdings: {}, basis: {}, cost: 0, drinks: 0 };
-      for (const st of STOCKS) prices[st.t] = Math.max(r2(st.ipo * 0.2), r2(prices[st.t] * moveFactor(t, st)));
-      tx.set(gameRef, { prices, open: gd.open || openPrices(), round: gd.round || 1, updatedAt: Date.now() });
       tx.set(playerRef, {
         name: me.name,
         holdings: { ...pd.holdings, [t]: (pd.holdings[t] || 0) + 1 },
         basis: { ...(pd.basis || {}), [t]: r2(((pd.basis || {})[t] || 0) + price) },
         cost: r2((pd.cost || 0) + price), drinks: (pd.drinks || 0) + 1, updatedAt: Date.now(),
       });
-      tx.set(tradeRef, { player: me.name, playerId: me.id, sector: t, drink: s.name, price, prices, ts: Date.now() });
+      tx.set(tradeRef, { player: me.name, playerId: me.id, sector: t, drink: s.name, price, ts: Date.now() });
       return price;
     });
     lastTrade = { id: tradeRef.id, t, price: paid, ts: Date.now() };
@@ -668,13 +698,11 @@ async function undo() {
   const playerRef = doc(playersCol, me.id);
   try {
     await runTransaction(db, async (tx) => {
-      const g = await tx.get(gameRef), p = await tx.get(playerRef), tr = await tx.get(doc(tradesCol, lt.id));
-      if (!g.exists() || !p.exists() || !tr.exists()) throw new Error("gone");
-      const gd = g.data(), pd = p.data(), prices = { ...openPrices(), ...gd.prices };
-      for (const st of STOCKS) prices[st.t] = r2(prices[st.t] / moveFactor(lt.t, st));
+      const p = await tx.get(playerRef), tr = await tx.get(doc(tradesCol, lt.id));
+      if (!p.exists() || !tr.exists()) throw new Error("gone");
+      const pd = p.data();
       const holdings = { ...pd.holdings, [lt.t]: Math.max(0, (pd.holdings[lt.t] || 0) - 1) };
       const basis = { ...(pd.basis || {}), [lt.t]: Math.max(0, r2(((pd.basis || {})[lt.t] || 0) - lt.price)) };
-      tx.set(gameRef, { prices, open: gd.open || openPrices(), round: gd.round || 1, updatedAt: Date.now() });
       tx.set(playerRef, { ...pd, holdings, basis, cost: Math.max(0, r2(pd.cost - lt.price)), drinks: Math.max(0, pd.drinks - 1), updatedAt: Date.now() });
       tx.delete(doc(tradesCol, lt.id));
     });
@@ -685,19 +713,13 @@ $("toast-undo").onclick = undo;
 
 /* ---------- events (host) ---------- */
 async function marketEvent(kind) {
-  let ev = EVENTS[kind], label;
+  let label = EVENTS[kind].label, secId = "";
   if (kind === "happy") {
     const sec = SECTORS[Math.floor(Math.random() * SECTORS.length)];
-    ev = { apply: (s) => s.sector === sec.id ? 1.15 : 1 }; label = `🍻 Happy hour! ${sec.name} (${sec.nick}) +15%`;
-  } else label = ev.label;
+    secId = sec.id; label = `🍻 Happy hour! ${sec.name} (${sec.nick}) +15%`;
+  }
   try {
-    await runTransaction(db, async (tx) => {
-      const g = await tx.get(gameRef), gd = g.exists() ? g.data() : {};
-      const prices = { ...openPrices(), ...gd.prices };
-      for (const st of STOCKS) prices[st.t] = Math.max(r2(st.ipo * 0.2), r2(prices[st.t] * ev.apply(st)));
-      tx.set(gameRef, { prices, open: gd.open || openPrices(), round: gd.round || 1, updatedAt: Date.now() });
-      tx.set(doc(tradesCol), { player: "MARKET", playerId: "market", sector: "event", drink: label, price: 0, prices, event: true, ts: Date.now() });
-    });
+    await setDoc(doc(tradesCol), { player: "MARKET", playerId: "market", sector: "event", drink: label, kind, secId, price: 0, event: true, ts: Date.now() });
     toast(label);
   } catch (e) { console.error(e); toast("Event failed."); }
 }
@@ -749,13 +771,14 @@ try { new QRCode($("qr"), { text: shareUrl, width: 170, height: 170 }); new QRCo
 if (isHost) $("host").classList.remove("hidden");
 if (isTV) document.body.classList.add("tv");
 setInterval(renderFeed, 30000);
+setInterval(renderAll, 20000); // prices drift as recent drinks age
 renderBell(); setInterval(renderBell, 15000);
 
 /* ---------- live data ---------- */
 onSnapshot(gameRef, (s) => { game = s.exists() ? s.data() : null; renderAll(); },
   (e) => { console.error(e); $("tape").textContent = "Market offline. Check your connection."; });
 onSnapshot(playersCol, (s) => { players = s.docs.map((d) => ({ ...d.data(), id: d.id })); renderIndex(); renderStocks(); renderPortfolio(); renderLeaders(); });
-onSnapshot(query(tradesCol, orderBy("ts"), limitToLast(500)), (s) => { trades = s.docs.map((d) => ({ ...d.data(), id: d.id })); renderAll(); });
+onSnapshot(query(tradesCol, orderBy("ts"), limitToLast(3000)), (s) => { trades = s.docs.map((d) => ({ ...d.data(), id: d.id })); renderAll(); });
 
 renderMe(); renderAll();
 if (!me.name) showJoin();
