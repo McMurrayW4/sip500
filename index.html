@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>Drink Market</title>
+<style>
+  :root {
+    --bg: #0b0f14; --card: #131a22; --line: #1f2a36; --text: #e8eef5; --muted: #8696a7;
+    --up: #22c55e; --down: #ef4444; --accent: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 8px; }
+  .brand { font-weight: 800; font-size: 18px; letter-spacing: -.3px; }
+  .brand span { color: var(--accent); }
+  .who { color: var(--muted); font-size: 13px; }
+  .tape { overflow: hidden; white-space: nowrap; border-top: 1px solid var(--line); font-size: 13px; }
+  .tape-inner { display: inline-block; padding: 6px 0; animation: scroll 40s linear infinite; }
+  .tape b { margin: 0 6px 0 18px; }
+  @keyframes scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+  main { max-width: 720px; margin: 0 auto; padding: 12px 16px; }
+  .view { display: none; } .view.on { display: block; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .sector-name { font-weight: 700; font-size: 16px; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .price { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 20px; text-align: right; }
+  .chg { font-variant-numeric: tabular-nums; font-size: 13px; text-align: right; }
+  .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); }
+  svg.spark { width: 100%; height: 36px; display: block; margin: 8px 0; }
+  .drinks { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; border: 0; cursor: pointer; border-radius: 10px; }
+  .drink { background: #1d2733; color: var(--text); padding: 9px 12px; font-size: 14px; }
+  .drink:active { transform: scale(.97); background: #26323f; }
+  .primary { background: var(--accent); color: #111; font-weight: 700; padding: 12px 16px; width: 100%; }
+  .danger { background: #3a1416; color: #fca5a5; padding: 10px 14px; }
+  input { font: inherit; width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: #0f151c; color: var(--text); margin: 8px 0 12px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td, th { padding: 9px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+  td:first-child, th:first-child, td:nth-child(2), th:nth-child(2) { text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tr.me td { color: var(--accent); }
+  .big { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: #0f151c; border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom); z-index: 5; }
+  nav button { flex: 1; background: none; color: var(--muted); padding: 12px 0 14px; font-size: 13px; border-radius: 0; }
+  nav button.on { color: var(--accent); font-weight: 700; }
+  .toast { position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%); background: #1f2a36; padding: 10px 16px;
+    border-radius: 999px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; white-space: nowrap; }
+  .toast.show { opacity: 1; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.75); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
+  .modal .card { width: 100%; max-width: 380px; }
+  .hidden { display: none !important; }
+  #qr { background: #fff; padding: 12px; border-radius: 10px; display: inline-block; margin-top: 8px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top">
+    <div class="brand">Drink<span>Market</span></div>
+    <div class="who" id="who"></div>
+  </div>
+  <div class="tape"><div class="tape-inner" id="tape">Loading market…</div></div>
+</header>
+
+<main>
+  <section class="view on" id="v-market"><div id="sectors"></div></section>
+
+  <section class="view" id="v-portfolio">
+    <div class="card">
+      <div class="sub">Portfolio value</div>
+      <div class="big" id="pf-value">$0.00</div>
+      <div id="pf-return" class="chg" style="text-align:left"></div>
+      <div class="sub" id="pf-cost" style="margin-top:6px"></div>
+    </div>
+    <div class="card"><table><thead><tr><th>Sector</th><th></th><th>Shares</th><th>Value</th></tr></thead><tbody id="pf-rows"></tbody></table></div>
+  </section>
+
+  <section class="view" id="v-board">
+    <div class="card">
+      <div class="row"><div class="sector-name">Leaderboard</div><div class="sub">Ranked by return %</div></div>
+      <table style="margin-top:8px"><thead><tr><th>#</th><th>Player</th><th>Drinks</th><th>Return</th></tr></thead><tbody id="lb-rows"></tbody></table>
+    </div>
+  </section>
+
+  <section class="view" id="v-rules">
+    <div class="card">
+      <div class="sector-name">How it works</div>
+      <p>Every drink belongs to a market sector. When you log a drink, you <b>buy one share</b> of that sector at its current price.</p>
+      <p>Each purchase pushes that sector's price <span class="up">up 6%</span> and nudges every other sector <span class="down">down 0.5%</span>. So the crowd's drinking drives the market.</p>
+      <p>Your <b>return</b> = what your shares are worth now ÷ what you paid, minus 1. Highest return wins. Buying early into a sector others pile into later pays off.</p>
+      <p class="muted">Please drink responsibly. Logging is on the honor system.</p>
+    </div>
+    <div class="card" id="admin" >
+      <div class="sector-name">Host tools</div>
+      <p class="sub">Share this link or let friends scan the code:</p>
+      <div class="sub" id="share-url" style="word-break:break-all"></div>
+      <div id="qr"></div>
+      <div id="admin-only" class="hidden">
+        <p class="sub" style="margin-top:14px">Start a fresh round: resets prices to $10 and clears every portfolio.</p>
+        <button class="danger" id="reset">Reset market</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button data-v="market" class="on">Market</button>
+  <button data-v="portfolio">Portfolio</button>
+  <button data-v="board">Leaders</button>
+  <button data-v="rules">Info</button>
+</nav>
+
+<div class="modal hidden" id="join">
+  <div class="card">
+    <div class="sector-name">Join the market</div>
+    <p class="sub">Pick a name your friends will recognize on the leaderboard.</p>
+    <input id="name" maxlength="24" placeholder="Your name" autocomplete="nickname">
+    <button class="primary" id="join-btn">Start trading</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, doc, collection, onSnapshot, runTransaction, query, orderBy, limitToLast,
+  getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+/* ===== EDIT YOUR SECTORS AND DRINKS HERE ===== */
+const SECTORS = [
+  { id: "tech",        name: "Tech",        icon: "💻", drinks: ["Busch Light"] },
+  { id: "consumer",    name: "Consumer",    icon: "🛍️", drinks: ["Bud Light", "Coors Light", "Miller Lite"] },
+  { id: "financials",  name: "Financials",  icon: "🏦", drinks: ["Michelob Ultra", "Natty Light"] },
+  { id: "energy",      name: "Energy",      icon: "⚡", drinks: ["Vodka Red Bull", "Energy drink"] },
+  { id: "healthcare",  name: "Healthcare",  icon: "🩺", drinks: ["White Claw", "Truly", "High Noon"] },
+  { id: "industrials", name: "Industrials", icon: "🏭", drinks: ["IPA", "Craft beer"] },
+  { id: "realestate",  name: "Real Estate", icon: "🏠", drinks: ["Shot"] },
+  { id: "commodities", name: "Commodities", icon: "🛢️", drinks: ["Mixed drink", "Wine"] },
+];
+const START_PRICE = 10;     // every sector opens here
+const BUY_BUMP = 0.06;      // bought sector rises 6%
+const OTHERS_DRIFT = 0.005; // all other sectors fall 0.5%
+const MIN_PRICE = 1;
+const GAME_ID = "main";
+/* ============================================ */
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAbRFEJ9nRFawxq2ELENEzPj66R0UAEEqs",
+  authDomain: "drink-market-9488a.firebaseapp.com",
+  projectId: "drink-market-9488a",
+  storageBucket: "drink-market-9488a.firebasestorage.app",
+  messagingSenderId: "14136141419",
+  appId: "1:14136141419:web:6a94100ae8776a6b0df32e",
+};
+
+const db = getFirestore(initializeApp(firebaseConfig));
+const gameRef = doc(db, "games", GAME_ID);
+const playersCol = collection(db, "games", GAME_ID, "players");
+const tradesCol = collection(db, "games", GAME_ID, "trades");
+
+const $ = (id) => document.getElementById(id);
+const money = (n) => "$" + (n || 0).toFixed(2);
+const pct = (n) => (n > 0 ? "+" : "") + (n * 100).toFixed(1) + "%";
+const cls = (n) => (n > 0.0005 ? "up" : n < -0.0005 ? "down" : "flat");
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const defaultPrices = () => Object.fromEntries(SECTORS.map((s) => [s.id, START_PRICE]));
+
+let me = { id: store.get("dm-id"), name: store.get("dm-name") };
+if (!me.id) { me.id = "p" + Math.random().toString(36).slice(2, 10); store.set("dm-id", me.id); }
+
+let game = null, players = [], trades = [];
+const isAdmin = new URLSearchParams(location.search).has("admin");
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+/* ---------- Joining ---------- */
+function showJoin() { $("join").classList.remove("hidden"); $("name").focus(); }
+$("join-btn").onclick = () => {
+  const n = $("name").value.trim().slice(0, 24);
+  if (!n) return;
+  me.name = n; store.set("dm-name", n);
+  $("join").classList.add("hidden"); renderWho();
+};
+$("name").addEventListener("keydown", (e) => { if (e.key === "Enter") $("join-btn").click(); });
+function renderWho() { $("who").textContent = me.name ? me.name : ""; }
+
+/* ---------- Buying (logging a drink) ---------- */
+async function buy(sectorId, drink) {
+  if (!me.name) return showJoin();
+  const playerRef = doc(playersCol, me.id);
+  const tradeRef = doc(tradesCol);
+  try {
+    const paid = await runTransaction(db, async (tx) => {
+      const g = await tx.get(gameRef);
+      const p = await tx.get(playerRef);
+      const gd = g.exists() ? g.data() : { prices: defaultPrices(), open: defaultPrices(), round: 1 };
+      const prices = { ...defaultPrices(), ...gd.prices };
+      const price = prices[sectorId];
+      const pd = p.exists() ? p.data() : { name: me.name, holdings: {}, cost: 0, drinks: 0 };
+      const holdings = { ...pd.holdings, [sectorId]: (pd.holdings[sectorId] || 0) + 1 };
+
+      for (const s of SECTORS) {
+        const f = s.id === sectorId ? 1 + BUY_BUMP : 1 - OTHERS_DRIFT;
+        prices[s.id] = Math.max(MIN_PRICE, Math.round(prices[s.id] * f * 100) / 100);
+      }
+      tx.set(gameRef, { prices, open: gd.open || defaultPrices(), round: gd.round || 1, updatedAt: Date.now() });
+      tx.set(playerRef, { name: me.name, holdings, cost: (pd.cost || 0) + price, drinks: (pd.drinks || 0) + 1, updatedAt: Date.now() });
+      tx.set(tradeRef, { player: me.name, playerId: me.id, sector: sectorId, drink, price, prices, ts: Date.now() });
+      return price;
+    });
+    toast(`Bought 1 ${sectorName(sectorId)} @ ${money(paid)}`);
+    if (navigator.vibrate) navigator.vibrate(30);
+  } catch (e) {
+    console.error(e); toast("Couldn't log that. Try again.");
+  }
+}
+const sectorName = (id) => (SECTORS.find((s) => s.id === id) || {}).name || id;
+
+/* ---------- Rendering ---------- */
+function prices() { return { ...defaultPrices(), ...(game && game.prices) }; }
+function opens() { return { ...defaultPrices(), ...(game && game.open) }; }
+
+function spark(sectorId) {
+  const series = [opens()[sectorId], ...trades.map((t) => t.prices && t.prices[sectorId]).filter(Boolean)];
+  if (series.length < 2) series.push(series[0]);
+  const min = Math.min(...series), max = Math.max(...series), span = max - min || 1;
+  const pts = series.map((v, i) => `${(i / (series.length - 1)) * 100},${34 - ((v - min) / span) * 30}`).join(" ");
+  const color = series[series.length - 1] >= series[0] ? "var(--up)" : "var(--down)";
+  return `<svg class="spark" viewBox="0 0 100 36" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function renderMarket() {
+  const P = prices(), O = opens();
+  $("sectors").innerHTML = SECTORS.map((s) => {
+    const ch = P[s.id] / O[s.id] - 1;
+    return `<div class="card">
+      <div class="row">
+        <div><div class="sector-name">${s.icon} ${s.name}</div><div class="sub">${s.drinks.join(" · ")}</div></div>
+        <div><div class="price">${money(P[s.id])}</div><div class="chg ${cls(ch)}">${pct(ch)}</div></div>
+      </div>
+      ${spark(s.id)}
+      <div class="drinks">${s.drinks.map((d) => `<button class="drink" data-s="${s.id}" data-d="${esc(d)}">+ ${esc(d)}</button>`).join("")}</div>
+    </div>`;
+  }).join("");
+  const items = SECTORS.map((s) => {
+    const ch = P[s.id] / O[s.id] - 1;
+    return `<b>${s.name.toUpperCase()}</b>${money(P[s.id])} <span class="${cls(ch)}">${pct(ch)}</span>`;
+  }).join("");
+  $("tape").innerHTML = items + items;
+}
+$("sectors").addEventListener("click", (e) => {
+  const b = e.target.closest(".drink"); if (b) buy(b.dataset.s, b.dataset.d);
+});
+
+function valueOf(p) {
+  const P = prices();
+  return Object.entries(p.holdings || {}).reduce((sum, [k, n]) => sum + (P[k] || 0) * n, 0);
+}
+
+function renderPortfolio() {
+  const mine = players.find((p) => p.id === me.id) || { holdings: {}, cost: 0, drinks: 0 };
+  const v = valueOf(mine), r = mine.cost ? v / mine.cost - 1 : 0, P = prices();
+  $("pf-value").textContent = money(v);
+  $("pf-return").innerHTML = mine.cost ? `<span class="${cls(r)}">${pct(r)} (${v - mine.cost >= 0 ? "+" : "-"}${money(Math.abs(v - mine.cost))})</span>` : `<span class="muted">Log a drink to buy your first share.</span>`;
+  $("pf-cost").textContent = `Paid ${money(mine.cost)} over ${mine.drinks || 0} drink${mine.drinks === 1 ? "" : "s"}`;
+  const rows = SECTORS.filter((s) => mine.holdings[s.id]).map((s) =>
+    `<tr><td>${s.icon} ${s.name}</td><td></td><td>${mine.holdings[s.id]}</td><td>${money(mine.holdings[s.id] * P[s.id])}</td></tr>`);
+  $("pf-rows").innerHTML = rows.join("") || `<tr><td colspan="4" class="muted">No holdings yet.</td></tr>`;
+}
+
+function renderBoard() {
+  const ranked = players.filter((p) => p.cost > 0)
+    .map((p) => ({ ...p, ret: valueOf(p) / p.cost - 1 }))
+    .sort((a, b) => b.ret - a.ret);
+  $("lb-rows").innerHTML = ranked.map((p, i) =>
+    `<tr class="${p.id === me.id ? "me" : ""}"><td>${i + 1}</td><td>${esc(p.name)}</td><td>${p.drinks}</td><td class="${cls(p.ret)}">${pct(p.ret)}</td></tr>`
+  ).join("") || `<tr><td colspan="4" class="muted">No trades yet. Be first.</td></tr>`;
+}
+
+function renderAll() { renderMarket(); renderPortfolio(); renderBoard(); }
+
+/* ---------- Tabs ---------- */
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("on", v.id === "v-" + b.dataset.v));
+  window.scrollTo(0, 0);
+});
+
+/* ---------- Host tools ---------- */
+const shareUrl = location.origin + location.pathname;
+$("share-url").textContent = shareUrl;
+try { new QRCode($("qr"), { text: shareUrl, width: 180, height: 180 }); } catch { $("qr").classList.add("hidden"); }
+if (isAdmin) $("admin-only").classList.remove("hidden");
+$("reset").onclick = async () => {
+  if ($("reset").dataset.armed !== "1") { $("reset").dataset.armed = "1"; $("reset").textContent = "Tap again to confirm reset"; return; }
+  $("reset").textContent = "Resetting…";
+  try {
+    for (const col of [playersCol, tradesCol]) {
+      const snap = await getDocs(col);
+      let batch = writeBatch(db), n = 0;
+      for (const d of snap.docs) { batch.delete(d.ref); if (++n % 400 === 0) { await batch.commit(); batch = writeBatch(db); } }
+      await batch.commit();
+    }
+    await runTransaction(db, async (tx) => {
+      const g = await tx.get(gameRef);
+      tx.set(gameRef, { prices: defaultPrices(), open: defaultPrices(), round: ((g.exists() && g.data().round) || 1) + 1, updatedAt: Date.now() });
+    });
+    toast("Market reset. New round!");
+  } catch (e) { console.error(e); toast("Reset failed."); }
+  $("reset").dataset.armed = ""; $("reset").textContent = "Reset market";
+};
+
+/* ---------- Live data ---------- */
+onSnapshot(gameRef, (s) => { game = s.exists() ? s.data() : null; renderAll(); },
+  (e) => { console.error(e); $("tape").textContent = "Can't reach the market. Check your connection."; });
+onSnapshot(playersCol, (s) => { players = s.docs.map((d) => ({ id: d.id, ...d.data() })); renderPortfolio(); renderBoard(); });
+onSnapshot(query(tradesCol, orderBy("ts"), limitToLast(300)), (s) => { trades = s.docs.map((d) => d.data()); renderMarket(); });
+
+renderWho(); renderAll();
+if (!me.name) showJoin();
+</script>
+</body>
+</html>
