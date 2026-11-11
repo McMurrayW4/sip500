@@ -121,6 +121,10 @@
   .modal .panel { width: 100%; max-width: 380px; padding: 20px; }
   .modal input { width: 100%; padding: 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; margin: 12px 0; }
   .modal .btn { width: 100%; }
+  .qty { display: flex; align-items: center; gap: 8px; margin: 14px 0; }
+  .qty .btn { width: 48px; height: 48px; padding: 0; font-size: 22px; }
+  .qty .n { flex: 1; text-align: center; font-size: 30px; font-weight: 800; }
+  .qty input[type=range] { width: 100%; accent-color: var(--orange); }
   .foot { text-align: center; font-size: 11px; color: var(--muted); margin: 18px 0 6px; }
   .bell { text-align: center; font-size: 12px; font-weight: 600; padding: 6px 12px; border-top: 1px solid var(--line); }
   .bell.open { color: var(--up); background: rgba(22,199,132,.07); }
@@ -248,13 +252,14 @@
         <li><b>Market hours: 7:30 PM – 2:00 AM ET.</b> <b>After hours: 2:00 – 4:00 AM ET.</b> After-hours drinks move prices at half strength. Trading is locked 4 AM – 7:30 PM.</li>
         <li>Everyone starts with <b>$100 in SIP Bucks</b>. Winner = highest account value (cash + shares) at the closing bell.</li>
         <li>Every drink is a <b>stock</b> with a ticker, grouped into sectors like the real S&amp;P 500.</li>
-        <li>When you order a drink, tap <b>+</b>. You buy one share, paid from your cash. You pay the price after your own order moves it (like real-market slippage). One drink every 3 minutes max.</li>
+        <li>When you order a drink, tap <b>+</b>. You buy one share, paid from your cash. You pay the midpoint between the price before and after your own order moves it (like real-market slippage). One drink every 10 minutes max.</li>
         <li><b>A friend has to verify it.</b> New drinks show in the Feed until someone else taps <b>Verify</b>. Unverified shares are worth $0 and don't move prices.</li>
         <li><b>Sell anytime</b> from your Portfolio. You get the current price minus a 2% bartender tip. Selling nudges the price down.</li>
         <li>Prices follow <b>popularity</b>. Each drink's price depends on its share of what everyone's ordering. Popular drinks <span class="up">rise</span>, and drinks nobody orders <span class="down">sink</span>.</li>
-        <li>Recent orders count most. A drink ordered 45 minutes ago counts half as much as one ordered now, so prices keep moving all night.</li>
+        <li>Bull market: the whole market rises a little as the night gets busier, so early buyers are rewarded.</li>
+        <li>Prices only move when someone orders. Recent orders count most: a drink's influence fades by half after 40 more drinks are ordered.</li>
         <li>The <b>SIP 500 index</b> starts at 500. Like the real S&amp;P, it's weighted, so the drinks people own the most move it the most.</li>
-        <li>Strategy: drink what nobody's ordering yet, then sell once the crowd piles in. 🚩 marks anyone logging more than 6 drinks in an hour.</li>
+        <li>Strategy: drink what nobody's ordering yet, then sell once the crowd piles in. 🚩 marks anyone logging more than 4 drinks in an hour.</li>
       </ol>
       <p class="sub" style="margin-top:10px">Opening prices are placeholder bar prices until real menu prices are added. Live prices range from 50% to 250% of opening. Signature stocks: GDNT = TD's Clemson Goodnight mini pitcher, PKL = Tiger Town Tavern's Pickletini, JET = Study Hall's frozen Jet Fuel.</p>
     </div>
@@ -312,6 +317,23 @@
     <input id="name" maxlength="24" placeholder="Your trader name" autocomplete="nickname" enterkeyhint="go">
     <button class="btn primary" id="join-btn">Open my account</button>
     <p class="sub" style="margin:10px 0 0;text-align:center">21+ only. Drink responsibly.</p>
+  </div>
+</div>
+
+<div class="modal hidden" id="sellsheet">
+  <div class="panel">
+    <div class="row"><p class="h" id="ss-title" style="font-size:18px">Sell</p><button class="chip" id="ss-x" aria-label="Close">✕</button></div>
+    <p class="sub" id="ss-own" style="margin:4px 0 0"></p>
+    <div class="qty">
+      <button class="btn" id="ss-minus" aria-label="Fewer">−</button>
+      <div class="n num" id="ss-n">1</div>
+      <button class="btn" id="ss-plus" aria-label="More">+</button>
+    </div>
+    <input type="range" id="ss-range" min="1" max="1" value="1" style="width:100%;accent-color:var(--orange)">
+    <div class="row" style="margin-top:6px"><button class="chip" id="ss-half">Half</button><button class="chip" id="ss-all">All</button></div>
+    <div class="kv num" id="ss-kv" style="grid-template-columns:repeat(3,1fr);margin-top:12px"></div>
+    <button class="btn primary" id="ss-go" style="width:100%;margin-top:12px">Sell</button>
+    <p class="sub" style="text-align:center;margin:8px 0 0">Each share sold nudges the price down, and the 2% tip comes out of the total.</p>
   </div>
 </div>
 
@@ -373,7 +395,7 @@ const STOCKS = [
 /* Pricing: each stock's price follows its share of what everyone is drinking.
    demand = drinks bought, with older drinks counting less (half-life below).
    price  = opening price × ((demand + SMOOTH) / (average demand + SMOOTH)) ^ SENSITIVITY  */
-const HALF_LIFE_MIN = 45;   // a drink bought 45 min ago counts half as much as one bought now
+const HALF_LIFE_DRINKS = 40; // a drink's influence halves after 40 more drinks are ordered (prices only move when people order)
 const SMOOTH = 1;           // keeps the first few drinks from swinging prices wildly
 const SENSITIVITY = 0.5;    // 0.5 = a drink with 4x the average demand trades at 2x its opening price
 const MIN_MULT = 0.5, MAX_MULT = 2.5; // prices stay between 50% and 250% of the real menu price
@@ -381,9 +403,10 @@ const AH_WEIGHT = 0.5;      // after-hours (2–4 AM) drinks count half as much
 const START_CASH = 100;     // everyone starts with $100 in SIP Bucks
 const SELL_TIP = 0.02;      // 2% "bartender tip" taken when you sell
 const SELL_WEIGHT = 0.5;    // a sale counts as half a negative order
-const COOLDOWN_MIN = 3;     // one drink per person every 3 minutes
-const PACE_FLAG = 6;        // 🚩 if someone logs more than this many drinks in an hour
+const COOLDOWN_MIN = 10;    // one drink per person every 10 minutes
+const PACE_FLAG = 4;        // 🚩 if someone logs more than this many drinks in an hour
 const REQUIRE_VERIFY = true; // drinks need a friend to tap Verify before they count
+const GROWTH = 0.12;        // bull market: every stock rises gently as more drinks are ordered (≈ +12% after 3 drinks per stock)
 const INDEX_BASE = 500, GAME_ID = "sip500", UNDO_MS = 15000;
 const EVENTS = {
   bull:     { label: "🐂 Bull run! Every stock +5%",            apply: (s) => 1.05 },
@@ -443,36 +466,35 @@ const indexOf = (prices, open, vol = VOL) => {
   for (const s of STOCKS) { const w = (vol[s.t] || 0) + 1; num += w * (prices[s.t] || s.ipo) / (open[s.t] || s.ipo); den += w; }
   return INDEX_BASE * num / den;
 };
-const decay = (ms) => Math.pow(0.5, Math.max(0, ms) / (HALF_LIFE_MIN * 60000));
-function priceFrom(S, ev) {
+const DECAY = Math.pow(0.5, 1 / HALF_LIFE_DRINKS);
+function priceFrom(S, ev, total = 0) {
   const avg = STOCKS.reduce((a, s) => a + S[s.t], 0) / STOCKS.length, out = {};
+  const level = Math.pow(1 + total / (STOCKS.length * 3), GROWTH);
   for (const s of STOCKS) {
-    const m = Math.pow((S[s.t] + SMOOTH) / (avg + SMOOTH), SENSITIVITY) * ev[s.t];
+    const m = Math.pow((S[s.t] + SMOOTH) / (avg + SMOOTH), SENSITIVITY) * ev[s.t] * level;
     out[s.t] = r2(s.ipo * Math.min(MAX_MULT, Math.max(MIN_MULT, m)));
   }
   return out;
 }
 // Replays every trade in order so all phones compute identical prices.
 function recompute() {
-  const S = {}, ev = {}, series = {}, idx = [INDEX_BASE], vol = {};
+  const S = {}, ev = {}, series = {}, idx = [INDEX_BASE], vol = {}; let total = 0;
   for (const s of STOCKS) { S[s.t] = 0; ev[s.t] = 1; series[s.t] = [s.ipo]; vol[s.t] = 0; }
-  let last = null;
   const push = (p) => { for (const s of STOCKS) series[s.t].push(p[s.t]); idx.push(indexOf(p, O(), vol)); };
   for (const x of trades) {
-    if (last != null) { const d = decay(x.ts - last); for (const s of STOCKS) S[s.t] *= d; }
-    last = x.ts;
     if (x.event) { const e = EVENTS[x.kind]; if (e) for (const s of STOCKS) ev[s.t] *= e.apply(s, x); }
     else if (S[x.sector] != null) {
       const w = x.ah ? AH_WEIGHT : 1;
-      if (x.type === "sell") { S[x.sector] = Math.max(0, S[x.sector] - w * SELL_WEIGHT); vol[x.sector] = Math.max(0, vol[x.sector] - w); }
-      else if (!isPending(x)) { S[x.sector] += w; vol[x.sector] += w; }
+      const counts = x.type === "sell" || !isPending(x);
+      if (counts) for (const s of STOCKS) S[s.t] *= Math.pow(DECAY, x.type === "sell" ? (x.qty || 1) * SELL_WEIGHT : w);
+      if (x.type === "sell") { const q = x.qty || 1; S[x.sector] = Math.max(0, S[x.sector] - w * SELL_WEIGHT * q); vol[x.sector] = Math.max(0, vol[x.sector] - w * q); }
+      else if (!isPending(x)) { S[x.sector] += w; vol[x.sector] += w; total += w; }
     }
-    push(priceFrom(S, ev));
+    push(priceFrom(S, ev, total));
   }
-  if (last != null) { const d = decay(Date.now() - last); for (const s of STOCKS) S[s.t] *= d; }
-  const now = priceFrom(S, ev); push(now);
-  const total = STOCKS.reduce((a, s) => a + S[s.t], 0), share = {};
-  for (const s of STOCKS) share[s.t] = total ? S[s.t] / total : 0;
+  const now = priceFrom(S, ev, total); push(now);
+  const sumS = STOCKS.reduce((a, s) => a + S[s.t], 0), share = {};
+  for (const s of STOCKS) share[s.t] = sumS ? S[s.t] / sumS : 0;
   VOL = vol; model = { now, series, idx, share };
 }
 // Slippage: you trade at the price AFTER your own order moves it, so you can't flip your own drink for a quick profit.
@@ -575,8 +597,8 @@ function stockRow(s, pr, o, vol, mine) {
     <div class="stock-more">${open ? `<svg class="chart" id="sc-${s.t}" viewBox="0 0 300 110" preserveAspectRatio="none" style="height:90px"></svg>
       <div class="kv num"><div>Open<b>${money(o[s.t])}</b></div><div>High<b>${money(hi)}</b></div><div>Low<b>${money(lo)}</b></div><div>Volume<b>${vol[s.t] || 0}</b></div></div>
       <div class="sub" style="margin-top:8px">${Math.round((model.share[s.t] || 0) * 100)}% of recent drinks · fair share ${Math.round(100 / STOCKS.length)}%${mine ? ` · You own ${mine}` : ""}</div>
-      <button class="big-buy" data-buy="${s.t}">Buy 1 share · ~${money(priceAfter({ sector: s.t, type: "buy" }))}</button>
-      ${mine ? `<button class="big-buy" style="background:var(--panel2);border:1px solid var(--line);color:var(--text)" data-sell="${s.t}">Sell 1 share · get ~${money(priceAfter({ sector: s.t, type: "sell" }) * (1 - SELL_TIP))}</button>` : ""}` : ""}</div>
+      <button class="big-buy" data-buy="${s.t}">Buy 1 share · ~${money((pr[s.t] + priceAfter({ sector: s.t, type: "buy" })) / 2)}</button>
+      ${mine ? `<button class="big-buy" style="background:var(--panel2);border:1px solid var(--line);color:var(--text)" data-sell="${s.t}">Sell shares…</button>` : ""}` : ""}</div>
   </div>`;
 }
 
@@ -656,7 +678,7 @@ function feedHTML(limit, interactive = true) {
   return list.map((t) => {
     if (t.event) return `<div class="feed-item event"><div class="dot">📰</div><div style="flex:1"><b>${esc(t.drink)}</b><div class="sub">Market news · ${ago(t.ts)}</div></div></div>`;
     const nm = `<b>${esc(t.player)}</b>${flag(t.playerId)}`, tk = `<b>${esc(t.sector)}</b> <span class="muted">(${esc((BY_T[t.sector] || {}).name || t.drink)})</span>`;
-    if (t.type === "sell") return `<div class="feed-item"><div class="dot">${esc(initials(t.player))}</div><div style="flex:1">${nm} sold ${tk}<div class="sub num">for ${money(t.price)}${ahTag(t)} · ${ago(t.ts)}</div></div></div>`;
+    if (t.type === "sell") return `<div class="feed-item"><div class="dot">${esc(initials(t.player))}</div><div style="flex:1">${nm} sold ${(t.qty || 1) > 1 ? t.qty + " " : ""}${tk}<div class="sub num">for ${money(t.price)}${ahTag(t)} · ${ago(t.ts)}</div></div></div>`;
     let status = "";
     if (t.verifiedBy) status = `<div class="sub" style="color:var(--up)">✓ Verified by ${esc(t.verifiedBy)}</div>`;
     else if (isPending(t)) status = interactive && me.name && t.playerId !== me.id
@@ -673,7 +695,7 @@ function renderFeed() {
 }
 
 function renderAll() {
-  recompute(); renderIndex(); renderTape(); $("heat").innerHTML = heatHTML(); $("tv-heat").innerHTML = heatHTML();
+  recompute(); if (typeof renderSell === "function" && sellT) renderSell(); renderIndex(); renderTape(); $("heat").innerHTML = heatHTML(); $("tv-heat").innerHTML = heatHTML();
   renderStocks(); renderPortfolio(); renderLeaders(); renderFeed();
 }
 
@@ -756,7 +778,8 @@ async function buy(t) {
   try {
     const res = await runTransaction(db, async (tx) => {
       const p = await tx.get(playerRef);
-      const price = priceAfter({ sector: t, type: "buy", ah: session() === "after" });
+      recompute(); const pre = P()[t];
+      const price = r2((pre + priceAfter({ sector: t, type: "buy", ah: session() === "after" })) / 2); // midpoint of before/after your order
       const pd = p.exists() ? p.data() : { holdings: {}, basis: {}, cost: 0, drinks: 0, cash: START_CASH };
       const cash = cashOf(pd);
       if (cooldownLeft(pd)) throw new Error("cooldown");
@@ -801,27 +824,67 @@ async function undo() {
 }
 $("toast-undo").onclick = undo;
 
-async function sell(t) {
+// What you'd get for selling n shares: each share sells a little lower than the one before it.
+function quoteSell(t, n) {
+  const ah = session() === "after"; let gross = 0; recompute(); let prev = P()[t];
+  for (let i = 1; i <= n; i++) { const post = priceAfter({ sector: t, type: "sell", qty: i, ah }); gross += (prev + post) / 2; prev = post; }
+  return { gross: r2(gross), proceeds: r2(gross * (1 - SELL_TIP)), tip: r2(gross * SELL_TIP), avg: r2(gross / n) };
+}
+function sellable(t) {
+  const mine = players.find((p) => p.id === me.id); if (!mine) return 0;
+  return Math.max(0, ((mine.holdings || {})[t] || 0) - (pendingOf(me.id)[t] || 0));
+}
+let sellT = null, sellN = 1;
+function openSell(t) {
+  if (!marketOpen()) return toast("Market's closed. Trading opens 7:30 PM ET.");
+  const max = sellable(t);
+  if (!max) return toast(((players.find((p) => p.id === me.id) || {}).holdings || {})[t] ? "Get that drink verified before you sell it." : "You don't own any.");
+  sellT = t; sellN = 1; $("ss-range").max = max; $("sellsheet").classList.remove("hidden"); renderSell();
+}
+function renderSell() {
+  if (!sellT) return;
+  const max = sellable(sellT); if (!max) { closeSell(); return; }
+  sellN = Math.min(Math.max(1, sellN), max);
+  const mine = players.find((p) => p.id === me.id), held = mine.holdings[sellT], avgCost = ((mine.basis || {})[sellT] || 0) / held;
+  const q = quoteSell(sellT, sellN), pl = q.proceeds - avgCost * sellN;
+  $("ss-title").textContent = `Sell ${sellT} · ${BY_T[sellT].name}`;
+  $("ss-own").textContent = `You can sell ${max} share${max === 1 ? "" : "s"}` + (held > max ? ` (${held - max} still waiting on verification)` : "") + ` · bought at ${money(avgCost)} avg`;
+  $("ss-n").textContent = sellN; $("ss-range").max = max; $("ss-range").value = sellN;
+  $("ss-minus").disabled = sellN <= 1; $("ss-plus").disabled = sellN >= max;
+  $("ss-kv").innerHTML = `<div>Avg price<b>${money(q.avg)}</b></div><div>Tip (2%)<b>−${money(q.tip)}</b></div><div>Profit<b class="${cls(pl)}">${pl >= 0 ? "+" : "−"}${money(Math.abs(pl))}</b></div>`;
+  $("ss-go").textContent = `Sell ${sellN} share${sellN === 1 ? "" : "s"} · get ${money(q.proceeds)}`;
+}
+function closeSell() { sellT = null; $("sellsheet").classList.add("hidden"); }
+$("ss-x").onclick = closeSell;
+$("sellsheet").addEventListener("click", (e) => { if (e.target.id === "sellsheet") closeSell(); });
+$("ss-minus").onclick = () => { sellN--; renderSell(); };
+$("ss-plus").onclick = () => { sellN++; renderSell(); };
+$("ss-range").oninput = (e) => { sellN = +e.target.value; renderSell(); };
+$("ss-half").onclick = () => { sellN = Math.max(1, Math.floor(sellable(sellT) / 2)); renderSell(); };
+$("ss-all").onclick = () => { sellN = sellable(sellT); renderSell(); };
+$("ss-go").onclick = async () => { const t = sellT, n = sellN; closeSell(); await sell(t, n); };
+
+async function sell(t, qty = 1) {
   if (!marketOpen()) return toast("Market's closed. Trading opens 7:30 PM ET.");
   if (!me.name) return showJoin();
+  qty = Math.max(1, Math.floor(qty));
   if (busy) return; busy = true;
   const playerRef = doc(playersCol, me.id), tradeRef = doc(tradesCol), s = BY_T[t];
   try {
     const got = await runTransaction(db, async (tx) => {
       const p = await tx.get(playerRef); if (!p.exists()) throw new Error("none");
       const pd = p.data(), n = (pd.holdings || {})[t] || 0, pn = pendingOf(me.id)[t] || 0;
-      if (n - pn < 1) throw new Error(n ? "pending" : "none");
-      const gross = priceAfter({ sector: t, type: "sell", ah: session() === "after" }), proceeds = r2(gross * (1 - SELL_TIP));
-      const avg = ((pd.basis || {})[t] || 0) / n;
-      tx.set(playerRef, { ...pd, holdings: { ...pd.holdings, [t]: n - 1 }, basis: { ...pd.basis, [t]: Math.max(0, r2(pd.basis[t] - avg)) },
-        cash: r2(cashOf(pd) + proceeds), realized: r2((pd.realized || 0) + proceeds - avg), updatedAt: Date.now() });
-      tx.set(tradeRef, { player: me.name, playerId: me.id, sector: t, drink: s.name, price: proceeds, gross, type: "sell", ah: session() === "after", ts: Date.now() });
-      return proceeds;
+      if (n - pn < qty) throw new Error(n - pn > 0 ? "toomany" : n ? "pending" : "none");
+      const q = quoteSell(t, qty), avgCost = ((pd.basis || {})[t] || 0) / n;
+      tx.set(playerRef, { ...pd, holdings: { ...pd.holdings, [t]: n - qty }, basis: { ...pd.basis, [t]: Math.max(0, r2(pd.basis[t] - avgCost * qty)) },
+        cash: r2(cashOf(pd) + q.proceeds), realized: r2((pd.realized || 0) + q.proceeds - avgCost * qty), updatedAt: Date.now() });
+      tx.set(tradeRef, { player: me.name, playerId: me.id, sector: t, drink: s.name, price: q.proceeds, gross: q.avg, qty, type: "sell", ah: session() === "after", ts: Date.now() });
+      return q.proceeds;
     });
-    toast(`Sold 1 ${t} for ${money(got)} (2% tip)`);
+    toast(`Sold ${qty} ${t} for ${money(got)} (after 2% tip)`);
   } catch (e) {
     console.error(e);
-    toast(e.message === "pending" ? "Get that drink verified before you sell it." : e.message === "none" ? "You don't own any." : "Sale failed. Try again.");
+    toast({ pending: "Get that drink verified before you sell it.", none: "You don't own any.", toomany: "You don't have that many verified shares." }[e.message] || "Sale failed. Try again.");
   }
   busy = false;
 }
@@ -875,7 +938,7 @@ $("reset").onclick = async () => {
 
 /* ---------- UI wiring ---------- */
 document.addEventListener("click", (e) => {
-  const sb = e.target.closest("[data-sell]"); if (sb) { e.stopPropagation(); return sell(sb.dataset.sell); }
+  const sb = e.target.closest("[data-sell]"); if (sb) { e.stopPropagation(); return openSell(sb.dataset.sell); }
   const vb = e.target.closest("[data-verify]"); if (vb) { vb.disabled = true; return verify(vb.dataset.verify); }
 });
 $("stocks").addEventListener("click", (e) => {
@@ -905,7 +968,7 @@ try { new QRCode($("qr"), { text: shareUrl, width: 170, height: 170 }); new QRCo
 if (isHost) $("host").classList.remove("hidden");
 if (isTV) document.body.classList.add("tv");
 setInterval(renderFeed, 30000);
-setInterval(renderAll, 20000); // prices drift as recent drinks age
+setInterval(renderAll, 30000); // refresh cooldown timers and "x min ago" labels
 renderBell(); setInterval(renderBell, 15000);
 
 /* ---------- live data ---------- */
