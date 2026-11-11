@@ -249,7 +249,7 @@
         <li>When you order a drink, tap <b>+</b>. You buy one share at the current price.</li>
         <li>Prices follow <b>popularity</b>. Each drink's price depends on its share of what everyone's ordering. Popular drinks <span class="up">rise</span>, and drinks nobody orders <span class="down">sink</span>.</li>
         <li>Recent orders count most. A drink ordered 45 minutes ago counts half as much as one ordered now, so prices keep moving all night.</li>
-        <li>The <b>SIP 500 index</b> starts at 500 and tracks the whole market.</li>
+        <li>The <b>SIP 500 index</b> starts at 500. Like the real S&amp;P, it's weighted, so the drinks people own the most move it the most.</li>
         <li>Winner = best <b>return %</b>, not most drinks. Buy early into what the crowd orders next.</li>
       </ol>
       <p class="sub" style="margin-top:10px">Opening prices are rough college-bar prices. Signature stocks: GDNT = TD's Clemson Goodnight mini pitcher, PKL = Tiger Town Tavern's Pickletini, JET = Study Hall's frozen Jet Fuel.</p>
@@ -425,7 +425,13 @@ let game = null, players = [], trades = [], sortMode = "sector", searchQ = "", o
 let model = { now: openPrices(), series: {}, idx: [INDEX_BASE], share: {} };
 const P = () => model.now;
 const O = () => openPrices();
-const indexOf = (prices, open) => INDEX_BASE * STOCKS.reduce((a, s) => a + (prices[s.t] || s.ipo) / (open[s.t] || s.ipo), 0) / STOCKS.length;
+// Weighted like the real S&P 500: stocks with more shares owned (drinks bought all night) count more.
+let VOL = {};
+const indexOf = (prices, open, vol = VOL) => {
+  let num = 0, den = 0;
+  for (const s of STOCKS) { const w = (vol[s.t] || 0) + 1; num += w * (prices[s.t] || s.ipo) / (open[s.t] || s.ipo); den += w; }
+  return INDEX_BASE * num / den;
+};
 const decay = (ms) => Math.pow(0.5, Math.max(0, ms) / (HALF_LIFE_MIN * 60000));
 function priceFrom(S, ev) {
   const avg = STOCKS.reduce((a, s) => a + S[s.t], 0) / STOCKS.length, out = {};
@@ -437,22 +443,22 @@ function priceFrom(S, ev) {
 }
 // Replays every trade in order so all phones compute identical prices.
 function recompute() {
-  const S = {}, ev = {}, series = {}, idx = [INDEX_BASE];
-  for (const s of STOCKS) { S[s.t] = 0; ev[s.t] = 1; series[s.t] = [s.ipo]; }
+  const S = {}, ev = {}, series = {}, idx = [INDEX_BASE], vol = {};
+  for (const s of STOCKS) { S[s.t] = 0; ev[s.t] = 1; series[s.t] = [s.ipo]; vol[s.t] = 0; }
   let last = null;
-  const push = (p) => { for (const s of STOCKS) series[s.t].push(p[s.t]); idx.push(indexOf(p, O())); };
+  const push = (p) => { for (const s of STOCKS) series[s.t].push(p[s.t]); idx.push(indexOf(p, O(), vol)); };
   for (const x of trades) {
     if (last != null) { const d = decay(x.ts - last); for (const s of STOCKS) S[s.t] *= d; }
     last = x.ts;
     if (x.event) { const e = EVENTS[x.kind]; if (e) for (const s of STOCKS) ev[s.t] *= e.apply(s, x); }
-    else if (S[x.sector] != null) S[x.sector] += 1;
+    else if (S[x.sector] != null) { S[x.sector] += 1; vol[x.sector] += 1; }
     push(priceFrom(S, ev));
   }
   if (last != null) { const d = decay(Date.now() - last); for (const s of STOCKS) S[s.t] *= d; }
   const now = priceFrom(S, ev); push(now);
   const total = STOCKS.reduce((a, s) => a + S[s.t], 0), share = {};
   for (const s of STOCKS) share[s.t] = total ? S[s.t] / total : 0;
-  model = { now, series, idx, share };
+  VOL = vol; model = { now, series, idx, share };
 }
 function seriesFor(t) { return model.series[t] || [BY_T[t].ipo]; }
 function indexSeries() { return model.idx; }
