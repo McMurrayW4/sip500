@@ -122,6 +122,11 @@
   .modal input { width: 100%; padding: 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; margin: 12px 0; }
   .modal .btn { width: 100%; }
   .foot { text-align: center; font-size: 11px; color: var(--muted); margin: 18px 0 6px; }
+  .bell { text-align: center; font-size: 12px; font-weight: 600; padding: 6px 12px; border-top: 1px solid var(--line); }
+  .bell.open { color: var(--up); background: rgba(22,199,132,.07); }
+  .bell.closed { color: #fbbf24; background: rgba(251,191,36,.08); }
+  body.closed .live::before { background: #fbbf24; animation: none; }
+  body.closed .buy, body.closed .big-buy { background: #2a323d; color: #6b7785; }
 
   /* TV / big-screen mode */
   body.tv { padding: 0; overflow: hidden; }
@@ -149,6 +154,7 @@
     <button class="me-chip" id="me-chip">Join</button>
   </div>
   <div class="tape"><div class="tape-inner num" id="tape">Opening bell…</div></div>
+  <div class="bell num" id="bell"></div>
 </header>
 
 <main>
@@ -238,6 +244,7 @@
     <div class="panel">
       <p class="h">How the SIP 500 works</p>
       <ol style="padding-left:18px;margin:8px 0 0;line-height:1.55">
+        <li><b>Market hours: 7:30 PM – 2:00 AM ET.</b> Trading is locked outside those hours.</li>
         <li>Every drink is a <b>stock</b> with a ticker, grouped into sectors like the real S&amp;P 500.</li>
         <li>When you order a drink, tap <b>+</b>. You buy one share at the current price.</li>
         <li>Each purchase pushes that stock <span class="up">up 5%</span> and its sector <span class="up">up 1.5%</span>. Everything else <span class="down">dips 0.2%</span>.</li>
@@ -605,7 +612,29 @@ function renderMe() { $("me-chip").textContent = me.name ? me.name : "Join"; }
 
 /* ---------- trading ---------- */
 let busy = false;
+/* ---------- market hours (Eastern Time) ---------- */
+const OPEN_MIN = 19 * 60 + 30, CLOSE_MIN = 2 * 60; // 7:30 PM – 2:00 AM ET
+function etMinutes() {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" }).formatToParts(new Date());
+  const g = (t) => +parts.find((p) => p.type === t).value;
+  return g("hour") * 60 + g("minute") + g("second") / 60;
+}
+function marketOpen() { const m = etMinutes(); return m >= OPEN_MIN || m < CLOSE_MIN; }
+function untilText(mins) { const h = Math.floor(mins / 60), m = Math.ceil(mins % 60); return h ? `${h}h ${m}m` : `${m}m`; }
+let wasOpen = null;
+function renderBell() {
+  const m = etMinutes(), open = marketOpen();
+  const left = open ? (m >= OPEN_MIN ? 24 * 60 + CLOSE_MIN - m : CLOSE_MIN - m) : OPEN_MIN - m;
+  $("bell").className = "bell num " + (open ? "open" : "closed");
+  $("bell").textContent = open ? `Market open · Closing bell 2:00 AM ET (in ${untilText(left)})` : `Market closed · Opening bell 7:30 PM ET (in ${untilText(left)})`;
+  document.body.classList.toggle("closed", !open);
+  document.querySelector(".live").textContent = open ? "LIVE" : "CLOSED";
+  if (wasOpen !== null && wasOpen !== open) toast(open ? "🔔 Opening bell! The SIP 500 is open." : "🔔 Closing bell. Market closed until 7:30 PM ET.");
+  wasOpen = open;
+}
+
 async function buy(t) {
+  if (!marketOpen()) return toast("Market's closed. Trading opens 7:30 PM ET.");
   if (!me.name) return showJoin();
   if (busy) return; busy = true;
   const playerRef = doc(playersCol, me.id), tradeRef = doc(tradesCol), s = BY_T[t];
@@ -720,6 +749,7 @@ try { new QRCode($("qr"), { text: shareUrl, width: 170, height: 170 }); new QRCo
 if (isHost) $("host").classList.remove("hidden");
 if (isTV) document.body.classList.add("tv");
 setInterval(renderFeed, 30000);
+renderBell(); setInterval(renderBell, 15000);
 
 /* ---------- live data ---------- */
 onSnapshot(gameRef, (s) => { game = s.exists() ? s.data() : null; renderAll(); },
